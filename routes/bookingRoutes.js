@@ -1,6 +1,6 @@
 const express = require("express");
 const Booking = require("../models/Booking");
-const Student = require("../models/Student");
+const User = require("../models/User");
 const { requireStudent } = require("../middleware/auth");
 
 const router = express.Router();
@@ -14,7 +14,7 @@ router.post("/", requireStudent, async (req, res) => {
             return res.status(400).json({ message: "Date and time are required" });
         }
 
-        const student = await Student.findById(req.user.id);
+        const student = await User.findOne({ _id: req.user.id, role: "student" });
         if (!student) {
             return res.status(401).json({ message: "Student not found" });
         }

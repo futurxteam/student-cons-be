@@ -1,5 +1,5 @@
 
-const Student = require("../models/Student");
+const User = require("../models/User");
 const jwt = require("jsonwebtoken");
 
 // STUDENT REGISTRATION
@@ -13,7 +13,7 @@ const registerStudent = async (req, res) => {
             });
         }
 
-        const existingStudent = await Student.findOne({
+        const existingStudent = await User.findOne({
             $or: [
                 { rollNumber: rollNumber.trim() },
                 { email: email.trim().toLowerCase() },
@@ -26,12 +26,13 @@ const registerStudent = async (req, res) => {
             });
         }
 
-        const student = await Student.create({
+        const student = await User.create({
             rollNumber: rollNumber.trim(),
             name: name.trim(),
             email: email.trim().toLowerCase(),
             phone: phone.trim(),
             dob,
+            role: "student",
         });
 
         res.status(201).json({
@@ -64,9 +65,10 @@ const loginStudent = async (req, res) => {
             });
         }
 
-        const student = await Student.findOne({
+        const student = await User.findOne({
             rollNumber: rollNumber.trim(),
             dob,
+            role: "student",
         });
 
         if (!student) {

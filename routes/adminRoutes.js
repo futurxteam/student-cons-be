@@ -1,9 +1,10 @@
+
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
-const Admin = require("../models/Admin");
-const Student = require("../models/Student");
+
+const User = require("../models/User");
 const Booking = require("../models/Booking");
 const { requireAdmin } = require("../middleware/auth");
 
@@ -14,18 +15,44 @@ router.post("/login", async (req, res) => {
     try {
         const { username, password } = req.body;
 
-        if (typeof username !== "string" || typeof password !== "string" || !username.trim() || !password) {
-            return res.status(400).json({ message: "Username and password are required" });
+        if (
+            typeof username !== "string" ||
+            typeof password !== "string" ||
+            !username.trim() ||
+            !password
+        ) {
+            return res.status(400).json({
+                message: "Username and password are required"
+            });
         }
 
         const identifier = username.trim().toLowerCase();
-        const admin = await Admin.findOne({
-            $or: [{ username: identifier }, { email: identifier }],
-        });
 
-        const valid = admin && (await bcrypt.compare(password, admin.password));
+        const admin = await User.findOne({
+            role: "admin",
+            $or: [
+                { username: identifier },
+                { email: identifier },
+                { adminId: username.trim().toUpperCase() }
+            ]
+        }).select("+password");
+
+        const valid =
+            admin &&
+            typeof admin.password === "string" &&
+            (await bcrypt.compare(password, admin.password));
+
         if (!valid) {
-            return res.status(401).json({ message: "Invalid username or password" });
+            // Debug info only - never log passwords or hashes
+            console.warn(
+                `Admin login failed: identifier="${identifier}", ` +
+                (admin
+                    ? `admin found, hasPasswordHash=${typeof admin.password === "string"}, passwordMatch=false`
+                    : "no admin with that username/email")
+            );
+            return res.status(401).json({
+                message: "Invalid username or password"
+            });
         }
 
         const token = jwt.sign(
@@ -43,37 +70,66 @@ router.post("/login", async (req, res) => {
                 name: admin.name,
                 username: admin.username,
                 email: admin.email,
-                role: admin.role,
-            },
+                role: admin.role
+            }
         });
+
     } catch (error) {
-        res.status(500).json({ message: "Login failed" });
+        console.error("Admin Login Error:", error);
+
+        res.status(500).json({
+            message: "Login failed"
+        });
     }
 });
+
 
 // Dashboard statistics
 router.get("/stats", requireAdmin, async (req, res) => {
     try {
         const [totalStudents, bookings] = await Promise.all([
-            Student.countDocuments(),
-            Booking.find({}, "date status").lean(),
+            User.countDocuments({ role: "student" }),
+            Booking.find({}, "date status").lean()
         ]);
 
-        const count = (s) => bookings.filter((b) => b.status === s).length;
+        const count = (status) =>
+            bookings.filter((booking) => booking.status === status).length;
 
-        // last 6 months (including current)
+        // Last 6 months including current month
         const now = new Date();
+
         const monthly = Array.from({ length: 6 }, (_, i) => {
-            const d = new Date(now.getFullYear(), now.getMonth() - 5 + i, 1);
-            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-            const inMonth = bookings.filter((b) => b.date.startsWith(key));
+            const d = new Date(
+                now.getFullYear(),
+                now.getMonth() - 5 + i,
+                1
+            );
+
+            const key = `${d.getFullYear()}-${String(
+                d.getMonth() + 1
+            ).padStart(2, "0")}`;
+
+            const inMonth = bookings.filter(
+                (booking) =>
+                    typeof booking.date === "string" &&
+                    booking.date.startsWith(key)
+            );
+
             return {
                 month: key,
-                label: d.toLocaleDateString("en-IN", { month: "short" }),
+                label: d.toLocaleDateString("en-IN", {
+                    month: "short"
+                }),
                 total: inMonth.length,
-                attended: inMonth.filter((b) => b.status === "attended").length,
-                pending: inMonth.filter((b) => b.status === "pending").length,
-                notAttended: inMonth.filter((b) => b.status === "not-attended").length,
+                attended: inMonth.filter(
+                    (b) => b.status === "attended"
+                ).length,
+                pending: inMonth.filter(
+                    (b) => b.status === "pending"
+                ).length,
+                notAttended: inMonth.filter(
+                    (b) => b.status === "not-attended"
+                ).length
             };
         });
 
@@ -83,83 +139,157 @@ router.get("/stats", requireAdmin, async (req, res) => {
             attended: count("attended"),
             pending: count("pending"),
             notAttended: count("not-attended"),
-            monthly,
+            monthly
         });
+
     } catch (error) {
-        res.status(500).json({ message: "Could not load statistics" });
+        console.error("Dashboard Stats Error:", error);
+
+        res.status(500).json({
+            message: "Could not load statistics"
+        });
     }
 });
 
-// All bookings (with student info)
+
+// All bookings with student information
 router.get("/bookings", requireAdmin, async (req, res) => {
     try {
         const bookings = await Booking.find()
             .populate("student", "name rollNumber")
             .sort({ date: -1, time: 1 });
+
         res.json(bookings);
+
     } catch (error) {
-        res.status(500).json({ message: "Could not load bookings" });
+        console.error("Booking List Error:", error);
+
+        res.status(500).json({
+            message: "Could not load bookings"
+        });
     }
 });
 
-// Update attendance
+
+// Update attendance status
 router.patch("/bookings/:id/status", requireAdmin, async (req, res) => {
     try {
         const { status } = req.body;
+
         if (!["pending", "attended", "not-attended"].includes(status)) {
-            return res.status(400).json({ message: "Invalid status" });
+            return res.status(400).json({
+                message: "Invalid status"
+            });
         }
+
         if (!mongoose.isValidObjectId(req.params.id)) {
-            return res.status(400).json({ message: "Invalid booking id" });
+            return res.status(400).json({
+                message: "Invalid booking id"
+            });
         }
 
         const booking = await Booking.findByIdAndUpdate(
             req.params.id,
             { status },
-            { new: true }
+            { new: true, runValidators: true }
         );
+
         if (!booking) {
-            return res.status(404).json({ message: "Booking not found" });
+            return res.status(404).json({
+                message: "Booking not found"
+            });
         }
+
         res.json(booking);
+
     } catch (error) {
-        res.status(500).json({ message: "Could not update booking" });
+        console.error("Attendance Update Error:", error);
+
+        res.status(500).json({
+            message: "Could not update booking"
+        });
     }
 });
+
 
 // Complete student list with booking counts
 router.get("/students", requireAdmin, async (req, res) => {
     try {
         const [students, counts] = await Promise.all([
-            Student.find().sort({ rollNumber: 1 }).lean(),
-            Booking.aggregate([{ $group: { _id: "$student", count: { $sum: 1 } } }]),
+            User.find({ role: "student" })
+                .sort({ rollNumber: 1 })
+                .lean(),
+
+            Booking.aggregate([
+                {
+                    $group: {
+                        _id: "$student",
+                        count: { $sum: 1 }
+                    }
+                }
+            ])
         ]);
-        const map = new Map(counts.map((c) => [String(c._id), c.count]));
-        res.json(
-            students.map((s) => ({ ...s, bookingCount: map.get(String(s._id)) || 0 }))
+
+        const map = new Map(
+            counts.map((c) => [String(c._id), c.count])
         );
+
+        res.json(
+            students.map((student) => ({
+                ...student,
+                bookingCount: map.get(String(student._id)) || 0
+            }))
+        );
+
     } catch (error) {
-        res.status(500).json({ message: "Could not load students" });
+        console.error("Student List Error:", error);
+
+        res.status(500).json({
+            message: "Could not load students"
+        });
     }
 });
 
-// Student details + booking history
+
+// Student details and booking history
 router.get("/students/:id", requireAdmin, async (req, res) => {
     try {
         if (!mongoose.isValidObjectId(req.params.id)) {
-            return res.status(400).json({ message: "Invalid student id" });
+            return res.status(400).json({
+                message: "Invalid student id"
+            });
         }
-        const student = await Student.findById(req.params.id).lean();
+
+        const student = await User.findOne({
+            _id: req.params.id,
+            role: "student"
+        }).lean();
+
         if (!student) {
-            return res.status(404).json({ message: "Student not found" });
+            return res.status(404).json({
+                message: "Student not found"
+            });
         }
-        const bookings = await Booking.find({ student: student._id }).sort({
-            date: -1,
+
+        const bookings = await Booking.find({
+            student: student._id
+        }).sort({
+            date: -1
         });
-        res.json({ student, bookings });
+
+        res.json({
+            student,
+            bookings
+        });
+
     } catch (error) {
-        res.status(500).json({ message: "Could not load student" });
+        console.error("Student Details Error:", error);
+
+        res.status(500).json({
+            message: "Could not load student"
+        });
     }
 });
+
 
 module.exports = router;
