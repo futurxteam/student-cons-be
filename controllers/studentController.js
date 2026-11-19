@@ -15,6 +15,7 @@ const registerStudent = async (req, res) => {
             department,
             course,
             batch,
+            class: className,
             year,
         } = req.body;
 
@@ -28,6 +29,7 @@ const registerStudent = async (req, res) => {
             department,
             course,
             batch,
+            class: className,
             year,
         });
 
@@ -72,6 +74,7 @@ const registerStudent = async (req, res) => {
                 department: student.department,
                 course: student.course,
                 batch: student.batch,
+                class: student.class,
                 year: student.year,
             },
         });
@@ -141,6 +144,7 @@ const loginStudent = async (req, res) => {
                 department: student.department,
                 course: student.course,
                 batch: student.batch,
+                class: student.class,
                 year: student.year,
             },
         });

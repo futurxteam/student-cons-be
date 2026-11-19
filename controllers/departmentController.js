@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Department = require("../models/Department");
 const Course = require("../models/Course");
 const Batch = require("../models/Batch");
+const Class = require("../models/Class");
 const User = require("../models/User");
 const Booking = require("../models/Booking");
 const { YEARS } = require("../config/academic");
@@ -17,14 +18,15 @@ const getStudentAcademicQuery = (deptName, courseName, batchName) => {
 
 // =========================================================================
 // 1. PUBLIC ACADEMIC STRUCTURE (for registration & filters)
-// Hierarchy: Department -> Course -> Batch -> Available Years
+// Hierarchy: Department -> Course -> Batch -> Class -> Available Years
 // =========================================================================
 const getPublicAcademicStructure = async (req, res) => {
     try {
-        const [departments, courses, batches] = await Promise.all([
+        const [departments, courses, batches, classes] = await Promise.all([
             Department.find().sort({ name: 1 }).lean(),
             Course.find().sort({ name: 1 }).lean(),
             Batch.find().sort({ name: 1 }).lean(),
+            Class.find().sort({ name: 1 }).lean(),
         ]);
 
         const structure = departments.map((dept) => {
@@ -33,11 +35,21 @@ const getPublicAcademicStructure = async (req, res) => {
                 .map((c) => {
                     const courseBatches = batches
                         .filter((b) => b.course.toString() === c._id.toString())
-                        .map((b) => ({
-                            _id: b._id,
-                            name: b.name,
-                            batchYear: b.batchYear || b.name,
-                        }));
+                        .map((b) => {
+                            const batchClasses = classes
+                                .filter((cl) => cl.batch.toString() === b._id.toString())
+                                .map((cl) => ({
+                                    _id: cl._id,
+                                    name: cl.name,
+                                }));
+
+                            return {
+                                _id: b._id,
+                                name: b.name,
+                                batchYear: b.batchYear || b.name,
+                                classes: batchClasses,
+                            };
+                        });
 
                     return {
                         _id: c._id,
@@ -74,11 +86,12 @@ const getPublicAcademicStructure = async (req, res) => {
 // =========================================================================
 const getAdminDepartments = async (req, res) => {
     try {
-        const [departments, courses, batches, studentEnrollments] =
+        const [departments, courses, batches, classes, studentEnrollments] =
             await Promise.all([
                 Department.find().sort({ name: 1 }).lean(),
                 Course.find().sort({ name: 1 }).lean(),
                 Batch.find().sort({ name: 1 }).lean(),
+                Class.find().sort({ name: 1 }).lean(),
                 User.aggregate([
                     { $match: { role: "student" } },
                     {
@@ -87,6 +100,8 @@ const getAdminDepartments = async (req, res) => {
                                 department: "$department",
                                 course: "$course",
                                 batch: "$batch",
+                                class: "$class",
+                                classRef: "$classRef",
                             },
                             count: { $sum: 1 },
                         },
@@ -98,12 +113,15 @@ const getAdminDepartments = async (req, res) => {
         const deptCountMap = new Map();
         const courseCountMap = new Map();
         const batchCountMap = new Map();
+        const classCountMap = new Map();
 
         for (const item of studentEnrollments) {
+            const count = item.count;
             const dName = item._id.department;
             const cName = item._id.course;
             const bName = item._id.batch;
-            const count = item.count;
+            const clName = item._id.class;
+            const clRef = item._id.classRef ? String(item._id.classRef) : null;
 
             if (dName) {
                 deptCountMap.set(dName, (deptCountMap.get(dName) || 0) + count);
@@ -115,6 +133,12 @@ const getAdminDepartments = async (req, res) => {
                 const key = `${cName}:::${bName}`;
                 batchCountMap.set(key, (batchCountMap.get(key) || 0) + count);
             }
+            if (clRef) {
+                classCountMap.set(clRef, (classCountMap.get(clRef) || 0) + count);
+            }
+            if (clName) {
+                classCountMap.set(clName, (classCountMap.get(clName) || 0) + count);
+            }
         }
 
         const data = departments.map((dept) => {
@@ -123,14 +147,30 @@ const getAdminDepartments = async (req, res) => {
                 .map((c) => {
                     const courseBatches = batches
                         .filter((b) => b.course.toString() === c._id.toString())
-                        .map((b) => ({
-                            _id: b._id,
-                            name: b.name,
-                            batchYear: b.batchYear || b.name,
-                            studentCount:
-                                batchCountMap.get(`${c.name}:::${b.name}`) || 0,
-                            createdAt: b.createdAt,
-                        }));
+                        .map((b) => {
+                            const batchClasses = classes
+                                .filter((cl) => cl.batch.toString() === b._id.toString())
+                                .map((cl) => ({
+                                    _id: cl._id,
+                                    name: cl.name,
+                                    studentCount:
+                                        classCountMap.get(String(cl._id)) ||
+                                        classCountMap.get(cl.name) ||
+                                        0,
+                                }));
+
+                            return {
+                                _id: b._id,
+                                name: b.name,
+                                batchYear: b.batchYear || b.name,
+                                classCount: batchClasses.length,
+                                totalClasses: batchClasses.length,
+                                studentCount:
+                                    batchCountMap.get(`${c.name}:::${b.name}`) || 0,
+                                classes: batchClasses,
+                                createdAt: b.createdAt,
+                            };
+                        });
 
                     return {
                         _id: c._id,
@@ -139,6 +179,7 @@ const getAdminDepartments = async (req, res) => {
                         departmentName: dept.name,
                         availableYears: c.availableYears || [],
                         batchCount: courseBatches.length,
+                        totalBatches: courseBatches.length,
                         studentCount: courseCountMap.get(c.name) || 0,
                         batches: courseBatches,
                         createdAt: c.createdAt,
@@ -152,6 +193,7 @@ const getAdminDepartments = async (req, res) => {
                 description: dept.description || "",
                 studentCount: deptCountMap.get(dept.name) || 0,
                 courseCount: deptCourses.length,
+                totalCourses: deptCourses.length,
                 courses: deptCourses,
                 createdAt: dept.createdAt,
                 updatedAt: dept.updatedAt,
@@ -451,8 +493,9 @@ const getCourseDetails = async (req, res) => {
             return res.status(404).json({ message: "Course not found" });
         }
 
-        const [batches, batchStudentCounts, totalStudents] = await Promise.all([
+        const [batches, classes, batchStudentCounts, totalStudents] = await Promise.all([
             Batch.find({ course: id }).sort({ name: 1 }).lean(),
+            Class.find({ course: id }).lean(),
             User.aggregate([
                 {
                     $match: {
@@ -478,10 +521,17 @@ const getCourseDetails = async (req, res) => {
             if (item._id) batchCountMap.set(item._id, item.count);
         }
 
-        const batchesWithCounts = batches.map((b) => ({
-            ...b,
-            studentCount: batchCountMap.get(b.name) || 0,
-        }));
+        const batchesWithCounts = batches.map((b) => {
+            const bClasses = classes.filter(
+                (cl) => cl.batch.toString() === b._id.toString()
+            );
+            return {
+                ...b,
+                classCount: bClasses.length,
+                totalClasses: bClasses.length,
+                studentCount: batchCountMap.get(b.name) || 0,
+            };
+        });
 
         res.json({
             success: true,
@@ -747,7 +797,7 @@ const getBatchDetails = async (req, res) => {
         }
 
         const batch = await Batch.findById(id)
-            .populate("course", "name availableYears")
+            .populate("course", "name availableYears department")
             .populate("department", "name")
             .lean();
 
@@ -755,22 +805,71 @@ const getBatchDetails = async (req, res) => {
             return res.status(404).json({ message: "Batch not found" });
         }
 
-        const totalStudents = await User.countDocuments({
-            role: "student",
-            $or: [
-                { batchRef: batch._id },
+        const [classes, studentEnrollments, totalStudents] = await Promise.all([
+            Class.find({ batch: id }).sort({ name: 1 }).lean(),
+            User.aggregate([
                 {
-                    batch: batch.name,
-                    course: batch.course?.name,
+                    $match: {
+                        role: "student",
+                        $or: [
+                            { batchRef: batch._id },
+                            { batch: batch.name, course: batch.course?.name },
+                        ],
+                    },
                 },
-            ],
-        });
+                {
+                    $group: {
+                        _id: {
+                            class: "$class",
+                            classRef: "$classRef",
+                        },
+                        count: { $sum: 1 },
+                    },
+                },
+            ]),
+            User.countDocuments({
+                role: "student",
+                $or: [
+                    { batchRef: batch._id },
+                    {
+                        batch: batch.name,
+                        course: batch.course?.name,
+                    },
+                ],
+            }),
+        ]);
+
+        const classCountMap = new Map();
+        for (const item of studentEnrollments) {
+            if (item._id.classRef) {
+                classCountMap.set(String(item._id.classRef), item.count);
+            }
+            if (item._id.class) {
+                classCountMap.set(
+                    item._id.class,
+                    (classCountMap.get(item._id.class) || 0) + item.count
+                );
+            }
+        }
+
+        const classesWithCounts = classes.map((cl) => ({
+            ...cl,
+            batchName: batch.name,
+            courseName: batch.course?.name,
+            departmentName: batch.department?.name,
+            studentCount:
+                classCountMap.get(String(cl._id)) ||
+                classCountMap.get(cl.name) ||
+                0,
+        }));
 
         res.json({
             success: true,
             batch: {
                 ...batch,
+                totalClasses: classes.length,
                 totalStudents,
+                classes: classesWithCounts,
             },
         });
     } catch (error) {
@@ -853,13 +952,24 @@ const deleteBatch = async (req, res) => {
             return res.status(404).json({ message: "Batch not found" });
         }
 
-        const studentCount = await User.countDocuments({
-            role: "student",
-            $or: [
-                { batchRef: batch._id },
-                { batch: batch.name, course: batch.course?.name },
-            ],
-        });
+        const [classCount, studentCount] = await Promise.all([
+            Class.countDocuments({ batch: id }),
+            User.countDocuments({
+                role: "student",
+                $or: [
+                    { batchRef: batch._id },
+                    { batch: batch.name, course: batch.course?.name },
+                ],
+            }),
+        ]);
+
+        if (classCount > 0) {
+            return res.status(400).json({
+                message: `Cannot delete batch "${batch.name}": It contains ${classCount} class(es). Please delete these classes first.`,
+                classCount,
+                studentCount,
+            });
+        }
 
         if (studentCount > 0) {
             return res.status(400).json({
@@ -880,7 +990,401 @@ const deleteBatch = async (req, res) => {
 };
 
 // =========================================================================
-// 6. BATCH STUDENTS & ADD STUDENT IN BATCH
+// 6. CLASS MANAGEMENT (Level 4: Class inside Batch)
+// =========================================================================
+const createClass = async (req, res) => {
+    try {
+        const { batchId } = req.params;
+        const { name } = req.body;
+
+        if (!mongoose.isValidObjectId(batchId)) {
+            return res.status(400).json({ message: "Invalid batch id" });
+        }
+
+        const batch = await Batch.findById(batchId)
+            .populate("course", "name department")
+            .populate("department", "name");
+
+        if (!batch) {
+            return res.status(404).json({ message: "Batch not found" });
+        }
+
+        if (!name || typeof name !== "string" || !name.trim()) {
+            return res.status(400).json({ message: "Class name is required" });
+        }
+
+        const trimmedName = name.trim();
+        const duplicate = await Class.findOne({
+            batch: batchId,
+            name: { $regex: new RegExp(`^${trimmedName}$`, "i") },
+        });
+
+        if (duplicate) {
+            return res.status(409).json({
+                message: `Class "${trimmedName}" already exists in ${batch.name}`,
+            });
+        }
+
+        const courseId = batch.course?._id || batch.course;
+        const deptId = batch.department?._id || batch.department;
+
+        const newClass = await Class.create({
+            name: trimmedName,
+            batch: batch._id,
+            course: courseId,
+            department: deptId,
+        });
+
+        res.status(201).json({
+            message: "Class created successfully",
+            class: {
+                ...newClass.toObject(),
+                studentCount: 0,
+            },
+        });
+    } catch (error) {
+        console.error("Create Class Error:", error);
+        res.status(500).json({ message: error.message || "Could not create class" });
+    }
+};
+
+const getClassDetails = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!mongoose.isValidObjectId(id)) {
+            return res.status(400).json({ message: "Invalid class id" });
+        }
+
+        const classDoc = await Class.findById(id)
+            .populate("batch", "name batchYear course department")
+            .populate("course", "name availableYears department")
+            .populate("department", "name")
+            .lean();
+
+        if (!classDoc) {
+            return res.status(404).json({ message: "Class not found" });
+        }
+
+        const studentCount = await User.countDocuments({
+            role: "student",
+            $or: [
+                { classRef: classDoc._id },
+                { class: classDoc.name, batchRef: classDoc.batch?._id || classDoc.batch },
+            ],
+        });
+
+        res.json({
+            success: true,
+            class: {
+                ...classDoc,
+                totalStudents: studentCount,
+                studentCount,
+            },
+        });
+    } catch (error) {
+        console.error("Get Class Details Error:", error);
+        res.status(500).json({ message: "Could not load class details" });
+    }
+};
+
+const updateClass = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name } = req.body;
+
+        if (!mongoose.isValidObjectId(id)) {
+            return res.status(400).json({ message: "Invalid class id" });
+        }
+
+        const classDoc = await Class.findById(id).populate("batch", "name");
+        if (!classDoc) {
+            return res.status(404).json({ message: "Class not found" });
+        }
+
+        if (!name || typeof name !== "string" || !name.trim()) {
+            return res.status(400).json({ message: "Class name is required" });
+        }
+
+        const trimmedName = name.trim();
+        const duplicate = await Class.findOne({
+            _id: { $ne: id },
+            batch: classDoc.batch._id,
+            name: { $regex: new RegExp(`^${trimmedName}$`, "i") },
+        });
+
+        if (duplicate) {
+            return res.status(409).json({
+                message: `Another class with name "${trimmedName}" already exists in this batch`,
+            });
+        }
+
+        const oldName = classDoc.name;
+        classDoc.name = trimmedName;
+        await classDoc.save();
+
+        if (oldName !== trimmedName) {
+            await User.updateMany(
+                {
+                    role: "student",
+                    $or: [
+                        { classRef: classDoc._id },
+                        { class: oldName, batchRef: classDoc.batch._id },
+                    ],
+                },
+                { $set: { class: trimmedName } }
+            );
+        }
+
+        res.json({
+            message: "Class updated successfully",
+            class: classDoc,
+        });
+    } catch (error) {
+        console.error("Update Class Error:", error);
+        res.status(500).json({ message: error.message || "Could not update class" });
+    }
+};
+
+const deleteClass = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!mongoose.isValidObjectId(id)) {
+            return res.status(400).json({ message: "Invalid class id" });
+        }
+
+        const classDoc = await Class.findById(id).populate("batch", "name");
+        if (!classDoc) {
+            return res.status(404).json({ message: "Class not found" });
+        }
+
+        const studentCount = await User.countDocuments({
+            role: "student",
+            $or: [
+                { classRef: classDoc._id },
+                { class: classDoc.name, batchRef: classDoc.batch?._id || classDoc.batch },
+            ],
+        });
+
+        if (studentCount > 0) {
+            return res.status(400).json({
+                message: `Cannot delete class "${classDoc.name}": ${studentCount} student(s) are currently enrolled in it. Please update or reassign these students first.`,
+                studentCount,
+            });
+        }
+
+        await Class.findByIdAndDelete(id);
+
+        res.json({
+            message: `Class "${classDoc.name}" was deleted successfully`,
+        });
+    } catch (error) {
+        console.error("Delete Class Error:", error);
+        res.status(500).json({ message: error.message || "Could not delete class" });
+    }
+};
+
+const getClassStudents = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { search } = req.query;
+
+        if (!mongoose.isValidObjectId(id)) {
+            return res.status(400).json({ message: "Invalid class id" });
+        }
+
+        const classDoc = await Class.findById(id)
+            .populate("batch", "name batchYear course department")
+            .populate("course", "name availableYears department")
+            .populate("department", "name")
+            .lean();
+
+        if (!classDoc) {
+            return res.status(404).json({ message: "Class not found" });
+        }
+
+        const query = {
+            role: "student",
+            $or: [
+                { classRef: classDoc._id },
+                { class: classDoc.name, batchRef: classDoc.batch?._id || classDoc.batch },
+            ],
+        };
+
+        if (search && typeof search === "string" && search.trim()) {
+            const term = search.trim();
+            query.$and = [
+                {
+                    $or: [
+                        { rollNumber: { $regex: term, $options: "i" } },
+                        { name: { $regex: term, $options: "i" } },
+                        { email: { $regex: term, $options: "i" } },
+                        { phone: { $regex: term, $options: "i" } },
+                    ],
+                },
+            ];
+        }
+
+        const students = await User.find(query)
+            .select("rollNumber name email phone dob department course batch class year createdAt")
+            .sort({ rollNumber: 1 })
+            .lean();
+
+        // Attach booking counts
+        const studentIds = students.map((s) => s._id);
+        const bookingCounts = await Booking.aggregate([
+            { $match: { student: { $in: studentIds } } },
+            { $group: { _id: "$student", count: { $sum: 1 } } },
+        ]);
+
+        const countMap = new Map(bookingCounts.map((b) => [String(b._id), b.count]));
+        const studentsWithCounts = students.map((s) => ({
+            ...s,
+            bookingCount: countMap.get(String(s._id)) || 0,
+        }));
+
+        res.json({
+            success: true,
+            class: classDoc,
+            totalStudents: students.length,
+            students: studentsWithCounts,
+        });
+    } catch (error) {
+        console.error("Get Class Students Error:", error);
+        res.status(500).json({ message: "Could not load class students" });
+    }
+};
+
+const addStudentToClass = async (req, res) => {
+    try {
+        const { id } = req.params; // class id
+        const { rollNumber, name, email, year, phone, dob } = req.body;
+
+        if (!mongoose.isValidObjectId(id)) {
+            return res.status(400).json({ message: "Invalid class id" });
+        }
+
+        const classDoc = await Class.findById(id)
+            .populate("batch", "name batchYear course department")
+            .populate("course", "name availableYears department")
+            .populate("department", "name");
+
+        if (!classDoc) {
+            return res.status(404).json({ message: "Class not found" });
+        }
+
+        // Required fields: Roll Number, Name, Email
+        if (!rollNumber || typeof rollNumber !== "string" || !rollNumber.trim()) {
+            return res.status(400).json({ message: "Roll Number is required" });
+        }
+        if (!name || typeof name !== "string" || !name.trim()) {
+            return res.status(400).json({ message: "Student Name is required" });
+        }
+        if (!email || typeof email !== "string" || !email.trim()) {
+            return res.status(400).json({ message: "Email Address is required" });
+        }
+
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const trimmedEmail = email.trim().toLowerCase();
+        if (!emailRegex.test(trimmedEmail)) {
+            return res.status(400).json({ message: "Invalid email address format" });
+        }
+
+        const trimmedRoll = rollNumber.trim().toUpperCase();
+
+        // Check for duplicates
+        const existingStudent = await User.findOne({
+            $or: [{ rollNumber: trimmedRoll }, { email: trimmedEmail }],
+        });
+
+        if (existingStudent) {
+            if (existingStudent.rollNumber === trimmedRoll) {
+                return res.status(409).json({
+                    message: `Roll number "${trimmedRoll}" is already registered`,
+                });
+            }
+            return res.status(409).json({
+                message: `Email "${trimmedEmail}" is already registered`,
+            });
+        }
+
+        // Inherit department, course, batch, class from the active context
+        const deptName = classDoc.department?.name || "";
+        const courseName = classDoc.course?.name || "";
+        const batchName = classDoc.batch?.name || "";
+        const className = classDoc.name;
+
+        const deptId = classDoc.department?._id || classDoc.department;
+        const courseId = classDoc.course?._id || classDoc.course;
+        const batchId = classDoc.batch?._id || classDoc.batch;
+        const classId = classDoc._id;
+
+        const availableYears = classDoc.course?.availableYears || YEARS;
+        let selectedYear = year;
+        if (!selectedYear || !availableYears.includes(selectedYear)) {
+            selectedYear = availableYears[0] || "1st Year";
+        }
+
+        const student = await User.create({
+            rollNumber: trimmedRoll,
+            name: name.trim(),
+            email: trimmedEmail,
+            phone: typeof phone === "string" ? phone.trim() : "",
+            dob: typeof dob === "string" && dob.trim() ? dob.trim() : "",
+            department: deptName,
+            course: courseName,
+            batch: batchName,
+            class: className,
+            year: selectedYear,
+            departmentRef: deptId,
+            courseRef: courseId,
+            batchRef: batchId,
+            classRef: classId,
+            departmentId: deptId,
+            courseId: courseId,
+            batchId: batchId,
+            classId: classId,
+            role: "student",
+        });
+
+        const newStudentObj = {
+            _id: student._id,
+            rollNumber: student.rollNumber,
+            name: student.name,
+            email: student.email,
+            phone: student.phone,
+            dob: student.dob,
+            department: student.department,
+            course: student.course,
+            batch: student.batch,
+            class: student.class,
+            year: student.year,
+            departmentRef: student.departmentRef,
+            courseRef: student.courseRef,
+            batchRef: student.batchRef,
+            classRef: student.classRef,
+            bookingCount: 0,
+            createdAt: student.createdAt,
+        };
+
+        res.status(201).json({
+            message: `Student "${student.name}" enrolled into ${classDoc.name} successfully`,
+            student: newStudentObj,
+        });
+    } catch (error) {
+        console.error("Add Student To Class Error:", error);
+        if (error.code === 11000) {
+            return res.status(409).json({
+                message: "A student with this roll number or email already exists",
+            });
+        }
+        res.status(500).json({ message: error.message || "Could not add student" });
+    }
+};
+
+// =========================================================================
+// 7. BATCH STUDENTS (Legacy / Batch level)
 // =========================================================================
 const getBatchStudents = async (req, res) => {
     try {
@@ -1120,6 +1624,12 @@ module.exports = {
     getBatchDetails,
     updateBatch,
     deleteBatch,
+    createClass,
+    getClassDetails,
+    updateClass,
+    deleteClass,
+    getClassStudents,
+    addStudentToClass,
     getBatchStudents,
     addStudentToBatch,
     deleteStudent,

@@ -28,6 +28,12 @@ const {
     getBatchDetails,
     updateBatch,
     deleteBatch,
+    createClass,
+    getClassDetails,
+    updateClass,
+    deleteClass,
+    getClassStudents,
+    addStudentToClass,
     getBatchStudents,
     addStudentToBatch,
     deleteStudent,
@@ -86,6 +92,15 @@ router.get("/batches/:id", requireAdmin, getBatchDetails);
 router.put("/batches/:id", requireAdmin, updateBatch);
 router.patch("/batches/:id", requireAdmin, updateBatch);
 router.delete("/batches/:id", requireAdmin, deleteBatch);
+
+// Class Management
+router.post("/batches/:batchId/classes", requireAdmin, createClass);
+router.get("/classes/:id", requireAdmin, getClassDetails);
+router.put("/classes/:id", requireAdmin, updateClass);
+router.patch("/classes/:id", requireAdmin, updateClass);
+router.delete("/classes/:id", requireAdmin, deleteClass);
+router.get("/classes/:id/students", requireAdmin, getClassStudents);
+router.post("/classes/:id/students", requireAdmin, addStudentToClass);
 
 // Batch Student Management
 router.get("/batches/:id/students", requireAdmin, getBatchStudents);

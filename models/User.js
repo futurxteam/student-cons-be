@@ -66,6 +66,11 @@ const userSchema = new mongoose.Schema(
             trim: true,
             required: isStudent,
         },
+        class: {
+            type: String,
+            trim: true,
+            default: "",
+        },
         year: {
             type: String,
             enum: YEARS,
@@ -86,6 +91,10 @@ const userSchema = new mongoose.Schema(
             type: mongoose.Schema.Types.ObjectId,
             ref: "Batch",
         },
+        classRef: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Class",
+        },
         departmentId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Department",
@@ -97,6 +106,10 @@ const userSchema = new mongoose.Schema(
         batchId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Batch",
+        },
+        classId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Class",
         },
 
         // Admin-specific fields

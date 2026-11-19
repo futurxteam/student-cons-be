@@ -1,10 +1,10 @@
 // Academic constants shared by the User model and controllers.
 const YEARS = ["1st Year", "2nd Year", "3rd Year", "4th Year"];
 
-const ACADEMIC_FIELDS = ["department", "course", "batch", "year"];
+const ACADEMIC_FIELDS = ["department", "course", "batch"];
 
-// Validates and normalises { department, course, batch, year }.
-// Checks dynamic relationships with Department, Course, and Batch models if present in DB.
+// Validates and normalises { department, course, batch, class, year }.
+// Checks dynamic relationships with Department, Course, Batch, and Class models if present in DB.
 // Returns { value } on success or { error } with a user-facing message.
 const validateAcademicDetails = async (body = {}) => {
     const value = {};
@@ -18,14 +18,19 @@ const validateAcademicDetails = async (body = {}) => {
         value[field] = raw.trim();
     }
 
-    if (!YEARS.includes(value.year)) {
-        return { error: `Year must be one of: ${YEARS.join(", ")}` };
+    // Default year gracefully so registration and legacy records remain compatible
+    const rawYear = typeof body.year === "string" ? body.year.trim() : "";
+    value.year = YEARS.includes(rawYear) ? rawYear : "1st Year";
+
+    if (typeof body.class === "string" && body.class.trim()) {
+        value.class = body.class.trim();
     }
 
     try {
         const Department = require("../models/Department");
         const Course = require("../models/Course");
         const Batch = require("../models/Batch");
+        const Class = require("../models/Class");
 
         const dept = await Department.findOne({
             name: { $regex: new RegExp(`^${value.department}$`, "i") },
@@ -49,14 +54,6 @@ const validateAcademicDetails = async (body = {}) => {
             value.course = course.name;
             value.courseRef = course._id;
 
-            if (course.availableYears && course.availableYears.length > 0) {
-                if (!course.availableYears.includes(value.year)) {
-                    return {
-                        error: `"${value.year}" is not an available academic year for ${course.name}. Available years: ${course.availableYears.join(", ")}`,
-                    };
-                }
-            }
-
             const batchDoc = await Batch.findOne({
                 course: course._id,
                 name: { $regex: new RegExp(`^${value.batch}$`, "i") },
@@ -65,6 +62,18 @@ const validateAcademicDetails = async (body = {}) => {
             if (batchDoc) {
                 value.batch = batchDoc.name;
                 value.batchRef = batchDoc._id;
+
+                if (value.class) {
+                    const classDoc = await Class.findOne({
+                        batch: batchDoc._id,
+                        name: { $regex: new RegExp(`^${value.class}$`, "i") },
+                    });
+                    if (classDoc) {
+                        value.class = classDoc.name;
+                        value.classRef = classDoc._id;
+                        value.classId = classDoc._id;
+                    }
+                }
             }
         }
     } catch (err) {

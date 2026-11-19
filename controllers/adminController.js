@@ -8,7 +8,7 @@ const Booking = require("../models/Booking");
 const { validateAcademicDetails } = require("../config/academic");
 
 const STUDENT_FIELDS =
-    "rollNumber name email phone dob department course batch year createdAt";
+    "rollNumber name email phone dob department course batch class year createdAt";
 
 // Admin Login
 const adminLogin = async (req, res) => {
