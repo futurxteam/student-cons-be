@@ -5,6 +5,10 @@ const mongoose = require("mongoose");
 
 const User = require("../models/User");
 const Booking = require("../models/Booking");
+const { validateAcademicDetails } = require("../config/academic");
+
+const STUDENT_FIELDS =
+    "rollNumber name email phone dob department course batch year createdAt";
 
 // Admin Login
 const adminLogin = async (req, res) => {
@@ -141,7 +145,10 @@ const getDashboardStats = async (req, res) => {
 const getAllBookings = async (req, res) => {
     try {
         const bookings = await Booking.find()
-            .populate("student", "name rollNumber")
+            .populate(
+                "student",
+                "name rollNumber department course batch year"
+            )
             .sort({ date: -1, time: 1 });
 
         res.json(bookings);
@@ -200,6 +207,9 @@ const getAllStudents = async (req, res) => {
     try {
         const [students, counts] = await Promise.all([
             User.find({ role: "student" })
+                .select(
+                    STUDENT_FIELDS
+                )
                 .sort({ rollNumber: 1 })
                 .lean(),
 
@@ -245,7 +255,9 @@ const getStudentDetails = async (req, res) => {
         const student = await User.findOne({
             _id: req.params.id,
             role: "student"
-        }).lean();
+        })
+            .select(STUDENT_FIELDS)
+            .lean();
 
         if (!student) {
             return res.status(404).json({
@@ -271,11 +283,143 @@ const getStudentDetails = async (req, res) => {
 };
 
 
+// Get Department Statistics
+const getDepartmentStats = async (req, res) => {
+    try {
+        const stats = await User.aggregate([
+            { $match: { role: "student" } },
+            {
+                $group: {
+                    _id: "$department",
+                    count: { $sum: 1 }
+                }
+            },
+            { $sort: { _id: 1 } }
+        ]);
+
+        res.json(stats);
+    } catch (error) {
+        console.error("Department Stats Error:", error);
+        res.status(500).json({
+            message: "Could not load department statistics"
+        });
+    }
+};
+
+
+// Get Course Statistics
+const getCourseStats = async (req, res) => {
+    try {
+        const stats = await User.aggregate([
+            { $match: { role: "student" } },
+            {
+                $group: {
+                    _id: "$course",
+                    count: { $sum: 1 }
+                }
+            },
+            { $sort: { _id: 1 } }
+        ]);
+
+        res.json(stats);
+    } catch (error) {
+        console.error("Course Stats Error:", error);
+        res.status(500).json({
+            message: "Could not load course statistics"
+        });
+    }
+};
+
+
+// Get Batch Statistics
+const getBatchStats = async (req, res) => {
+    try {
+        const stats = await User.aggregate([
+            { $match: { role: "student" } },
+            {
+                $group: {
+                    _id: "$batch",
+                    count: { $sum: 1 }
+                }
+            },
+            { $sort: { _id: 1 } }
+        ]);
+
+        res.json(stats);
+    } catch (error) {
+        console.error("Batch Stats Error:", error);
+        res.status(500).json({
+            message: "Could not load batch statistics"
+        });
+    }
+};
+
+
+// Update Student Academic Details (department, course, batch, year only)
+const updateStudentDetails = async (req, res) => {
+    try {
+        if (!mongoose.isValidObjectId(req.params.id)) {
+            return res.status(400).json({
+                message: "Invalid student id"
+            });
+        }
+
+        const { value, error } = await validateAcademicDetails(req.body);
+
+        if (error) {
+            return res.status(400).json({ message: error });
+        }
+
+        // Only the four academic fields are ever written here, so personal
+        // details and login credentials (rollNumber, dob) cannot be changed.
+        const student = await User.findOneAndUpdate(
+            {
+                _id: req.params.id,
+                role: "student"
+            },
+            { $set: value },
+            {
+                new: true,
+                runValidators: true
+            }
+        )
+            .select(STUDENT_FIELDS)
+            .lean();
+
+        if (!student) {
+            return res.status(404).json({
+                message: "Student not found"
+            });
+        }
+
+        res.json({
+            message: "Academic details updated successfully",
+            student
+        });
+
+    } catch (error) {
+        console.error("Student Update Error:", error);
+
+        if (error.name === "ValidationError") {
+            return res.status(400).json({ message: error.message });
+        }
+
+        res.status(500).json({
+            message: "Could not update student details"
+        });
+    }
+};
+
+
 module.exports = {
     adminLogin,
     getDashboardStats,
     getAllBookings,
     updateBookingStatus,
     getAllStudents,
-    getStudentDetails
+    getStudentDetails,
+    getDepartmentStats,
+    getCourseStats,
+    getBatchStats,
+    updateStudentDetails
 };

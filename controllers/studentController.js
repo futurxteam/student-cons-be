@@ -1,15 +1,39 @@
 
 const User = require("../models/User");
 const jwt = require("jsonwebtoken");
+const { validateAcademicDetails } = require("../config/academic");
 
 // STUDENT REGISTRATION
 const registerStudent = async (req, res) => {
     try {
-        const { rollNumber, name, email, phone, dob } = req.body;
+        const {
+            rollNumber,
+            name,
+            email,
+            phone,
+            dob,
+            department,
+            course,
+            batch,
+            year,
+        } = req.body;
 
         if (!rollNumber || !name || !email || !phone || !dob) {
             return res.status(400).json({
                 message: "Please fill in all fields",
+            });
+        }
+
+        const academic = await validateAcademicDetails({
+            department,
+            course,
+            batch,
+            year,
+        });
+
+        if (academic.error) {
+            return res.status(400).json({
+                message: academic.error,
             });
         }
 
@@ -32,6 +56,7 @@ const registerStudent = async (req, res) => {
             email: email.trim().toLowerCase(),
             phone: phone.trim(),
             dob,
+            ...academic.value,
             role: "student",
         });
 
@@ -44,10 +69,27 @@ const registerStudent = async (req, res) => {
                 email: student.email,
                 phone: student.phone,
                 dob: student.dob,
+                department: student.department,
+                course: student.course,
+                batch: student.batch,
+                year: student.year,
             },
         });
     } catch (error) {
         console.error("Registration Error:", error);
+
+        if (error.code === 11000) {
+            return res.status(409).json({
+                message: "Roll number or email already registered",
+            });
+        }
+
+        if (error.name === "ValidationError") {
+            return res.status(400).json({
+                message: error.message,
+            });
+        }
+
         res.status(500).json({
             message: "Registration failed",
         });
@@ -96,6 +138,10 @@ const loginStudent = async (req, res) => {
                 email: student.email,
                 phone: student.phone,
                 dob: student.dob,
+                department: student.department,
+                course: student.course,
+                batch: student.batch,
+                year: student.year,
             },
         });
     } catch (error) {

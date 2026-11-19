@@ -10,6 +10,8 @@ const connectDB = require("./config/db");
 const studentRoutes = require("./routes/studentRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const bookingRoutes = require("./routes/bookingRoutes");
+const { initAcademicData } = require("./config/initAcademicData");
+const { getPublicAcademicStructure } = require("./controllers/departmentController");
 
 const app = express();
 
@@ -38,6 +40,7 @@ app.use(cors(corsOptions));
 app.use(express.json());
 
 // API Routes
+app.get("/api/academic/structure", getPublicAcademicStructure);
 app.use("/api/students", studentRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/bookings", bookingRoutes);
@@ -81,6 +84,7 @@ const PORT = process.env.PORT || 5000;
 const startServer = async () => {
     try {
         await connectDB();
+        await initAcademicData();
 
         app.listen(PORT, () => {
             console.log(`Server running on port ${PORT}`);

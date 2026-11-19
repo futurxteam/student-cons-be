@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { YEARS } = require("../config/academic");
 
 const isStudent = function () {
     return this.role === "student";
@@ -30,7 +31,7 @@ const userSchema = new mongoose.Schema(
             required: true,
         },
 
-        // Student-specific fields
+        // Student-specific personal details
         rollNumber: {
             type: String,
             trim: true,
@@ -41,11 +42,61 @@ const userSchema = new mongoose.Schema(
         phone: {
             type: String,
             trim: true,
-            required: isStudent,
+            default: "",
         },
         dob: {
-            type: String, // YYYY-MM-DD
+            type: String,
+            trim: true,
+            default: "",
+        },
+
+        // Academic details (string names for fast display & backward compatibility)
+        department: {
+            type: String,
+            trim: true,
             required: isStudent,
+        },
+        course: {
+            type: String,
+            trim: true,
+            required: isStudent,
+        },
+        batch: {
+            type: String,
+            trim: true,
+            required: isStudent,
+        },
+        year: {
+            type: String,
+            enum: YEARS,
+            default: "1st Year",
+            required: isStudent,
+        },
+
+        // Academic ObjectId references
+        departmentRef: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Department",
+        },
+        courseRef: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Course",
+        },
+        batchRef: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Batch",
+        },
+        departmentId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Department",
+        },
+        courseId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Course",
+        },
+        batchId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Batch",
         },
 
         // Admin-specific fields
